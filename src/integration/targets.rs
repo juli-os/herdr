@@ -24,6 +24,7 @@ use super::env::{
     antigravity_cli_dir, claude_dir, codex_dir, copilot_dir, cursor_dir, devin_dir, droid_dir,
     grok_dir, hermes_dir, hermes_plugin_dir, kilo_dir, kimi_dir, letta_dir, mastracode_dir,
     omp_extension_dir, opencode_dir, opencode_state_dir, pi_extension_dir, qodercli_dir, qwen_dir,
+    zcode_dir,
 };
 use super::file_ops::{
     make_executable, remove_dir_all_if_exists, remove_file_if_exists, remove_legacy_bash_hook_file,
@@ -42,6 +43,7 @@ use super::types::{
     LettaUninstallResult, MastracodeInstallPaths, MastracodeUninstallResult, OmpInstallPaths,
     OmpUninstallResult, OpenCodeInstallPaths, OpenCodeUninstallResult, PiUninstallResult,
     QodercliInstallPaths, QodercliUninstallResult, QwenInstallPaths, QwenUninstallResult,
+    ZcodeInstallPaths, ZcodeUninstallResult,
 };
 use super::{
     ANTIGRAVITY_CLI_HOOK_ASSET, ANTIGRAVITY_CLI_HOOK_BLOCK_NAME, ANTIGRAVITY_CLI_HOOK_EVENTS,
@@ -61,7 +63,8 @@ use super::{
     OPENCODE_PLUGIN_INSTALL_NAME, OPENCODE_TUI_PLUGIN_ASSET, OPENCODE_TUI_PLUGIN_INSTALL_NAME,
     OPENCODE_TUI_PLUGIN_SPEC, PI_EXTENSION_ASSET, PI_EXTENSION_INSTALL_NAME, QODERCLI_HOOK_ASSET,
     QODERCLI_HOOK_EVENTS, QODERCLI_HOOK_INSTALL_NAME, QODERCLI_REMOVED_LIFECYCLE_HOOK_EVENTS,
-    QWEN_HOOK_ASSET, QWEN_HOOK_EVENTS, QWEN_HOOK_INSTALL_NAME,
+    QWEN_HOOK_ASSET, QWEN_HOOK_EVENTS, QWEN_HOOK_INSTALL_NAME, ZCODE_HOOK_ASSET,
+    ZCODE_HOOK_INSTALL_NAME, ZCODE_HOOK_TIMEOUT_MS,
 };
 
 fn ensure_extension_dir(dir: &Path, agent: &str) -> io::Result<()> {
@@ -1042,7 +1045,7 @@ pub(crate) fn install_qwen() -> io::Result<QwenInstallPaths> {
     })
 }
 
-fn letta_install_artifact_path(path: &Path, role: &str) -> io::Result<PathBuf> {
+fn install_artifact_path(path: &Path, role: &str) -> io::Result<PathBuf> {
     let file_name = path
         .file_name()
         .ok_or_else(|| io::Error::other(format!("invalid install path: {}", path.display())))?;
@@ -1051,7 +1054,7 @@ fn letta_install_artifact_path(path: &Path, role: &str) -> io::Result<PathBuf> {
     Ok(path.with_file_name(artifact_name))
 }
 
-pub(super) fn prepare_letta_install_file(
+pub(super) fn prepare_install_file(
     target: &Path,
     contents: &[u8],
     executable: bool,
@@ -1064,8 +1067,8 @@ pub(super) fn prepare_letta_install_file(
         )));
     }
 
-    let staged = letta_install_artifact_path(target, "staged")?;
-    let backup = letta_install_artifact_path(target, "backup")?;
+    let staged = install_artifact_path(target, "staged")?;
+    let backup = install_artifact_path(target, "backup")?;
     if staged.try_exists()? || backup.try_exists()? {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
@@ -1091,7 +1094,7 @@ pub(super) fn prepare_letta_install_file(
     Ok((staged, backup))
 }
 
-fn combine_letta_install_errors(primary: io::Error, rollback: io::Result<()>) -> io::Error {
+fn combine_install_errors(primary: io::Error, rollback: io::Result<()>) -> io::Error {
     match rollback {
         Ok(()) => primary,
         Err(rollback_err) => io::Error::new(
@@ -1101,7 +1104,7 @@ fn combine_letta_install_errors(primary: io::Error, rollback: io::Result<()>) ->
     }
 }
 
-pub(super) fn publish_letta_install_file(
+pub(super) fn publish_install_file(
     target: &Path,
     staged: &Path,
     backup: &Path,
@@ -1117,13 +1120,13 @@ pub(super) fn publish_letta_install_file(
         } else {
             Ok(())
         };
-        return Err(combine_letta_install_errors(err, rollback));
+        return Err(combine_install_errors(err, rollback));
     }
 
     Ok(had_original)
 }
 
-pub(super) fn rollback_letta_install_file(
+pub(super) fn rollback_install_file(
     target: &Path,
     backup: &Path,
     had_original: bool,
@@ -1135,9 +1138,9 @@ pub(super) fn rollback_letta_install_file(
     Ok(())
 }
 
-fn cleanup_letta_install_artifact(path: &Path) {
+fn cleanup_install_artifact(path: &Path) {
     if let Err(err) = remove_file_if_exists(path) {
-        tracing::warn!(path = %path.display(), %err, "failed to remove Letta install artifact");
+        tracing::warn!(path = %path.display(), %err, "failed to remove integration install artifact");
     }
 }
 
@@ -1196,50 +1199,219 @@ pub(crate) fn install_letta() -> io::Result<LettaInstallPaths> {
 
     let settings_contents = serde_json::to_string_pretty(&settings)?;
     let (hook_staged, hook_backup) =
-        prepare_letta_install_file(&hook_path, LETTA_HOOK_ASSET.as_bytes(), true, false)?;
+        prepare_install_file(&hook_path, LETTA_HOOK_ASSET.as_bytes(), true, false)?;
     let (settings_staged, settings_backup) =
-        match prepare_letta_install_file(&settings_path, settings_contents.as_bytes(), false, true)
-        {
+        match prepare_install_file(&settings_path, settings_contents.as_bytes(), false, true) {
             Ok(paths) => paths,
             Err(err) => {
-                cleanup_letta_install_artifact(&hook_staged);
+                cleanup_install_artifact(&hook_staged);
                 return Err(err);
             }
         };
 
-    let hook_had_original = match publish_letta_install_file(&hook_path, &hook_staged, &hook_backup)
-    {
+    let hook_had_original = match publish_install_file(&hook_path, &hook_staged, &hook_backup) {
         Ok(had_original) => had_original,
         Err(err) => {
-            cleanup_letta_install_artifact(&hook_staged);
-            cleanup_letta_install_artifact(&settings_staged);
+            cleanup_install_artifact(&hook_staged);
+            cleanup_install_artifact(&settings_staged);
             return Err(err);
         }
     };
 
     let settings_had_original =
-        match publish_letta_install_file(&settings_path, &settings_staged, &settings_backup) {
+        match publish_install_file(&settings_path, &settings_staged, &settings_backup) {
             Ok(had_original) => had_original,
             Err(err) => {
-                let err = combine_letta_install_errors(
+                let err = combine_install_errors(
                     err,
-                    rollback_letta_install_file(&hook_path, &hook_backup, hook_had_original),
+                    rollback_install_file(&hook_path, &hook_backup, hook_had_original),
                 );
-                cleanup_letta_install_artifact(&settings_staged);
+                cleanup_install_artifact(&settings_staged);
                 return Err(err);
             }
         };
 
     if hook_had_original {
-        cleanup_letta_install_artifact(&hook_backup);
+        cleanup_install_artifact(&hook_backup);
     }
     if settings_had_original {
-        cleanup_letta_install_artifact(&settings_backup);
+        cleanup_install_artifact(&settings_backup);
     }
 
     Ok(LettaInstallPaths {
         hook_path,
         settings_path,
+    })
+}
+
+// ---- zcode (experimental; Z.ai's Claude-compatible coding agent) -------------
+
+/// ZCode nests hook entries under `hooks.events.<Event>` rather than the
+/// Claude-style flat `hooks.<Event>` (see ZCode's hooks runtime contract), so
+/// the events map is the unit the shared CC-shaped entry helpers operate on.
+fn ensure_zcode_events_map<'a>(
+    settings: &'a mut Value,
+    settings_path: &Path,
+) -> io::Result<&'a mut Map<String, Value>> {
+    let hooks = ensure_hooks_object(
+        settings,
+        settings_path,
+        "zcode config",
+        "zcode config hooks",
+    )?;
+    let events = hooks
+        .entry("events".to_string())
+        .or_insert_with(|| json!({}));
+    events.as_object_mut().ok_or_else(|| {
+        io::Error::other(format!(
+            "zcode config hooks.events at {} must be a JSON object",
+            settings_path.display()
+        ))
+    })
+}
+
+fn ensure_zcode_session_hook(events: &mut Map<String, Value>, command: String) -> io::Result<()> {
+    let entries = events
+        .entry("SessionStart".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| io::Error::other("hook entries for SessionStart must be an array"))?;
+
+    entries.push(json!({
+        "hooks": [{
+            "type": "command",
+            "command": command,
+            // ZCode's native per-hook timeout field is milliseconds.
+            "timeoutMs": ZCODE_HOOK_TIMEOUT_MS,
+        }],
+    }));
+    Ok(())
+}
+
+pub(crate) fn install_zcode() -> io::Result<ZcodeInstallPaths> {
+    let dir = zcode_dir()?;
+    if !dir.is_dir() {
+        return Err(io::Error::other(format!(
+            "zcode config directory not found at {}. install zcode first",
+            dir.display()
+        )));
+    }
+
+    let hooks_dir = dir.join("hooks");
+    fs::create_dir_all(&hooks_dir)?;
+
+    let hook_path = hooks_dir.join(ZCODE_HOOK_INSTALL_NAME);
+
+    let settings_path = dir.join("config.json");
+    let mut settings = if settings_path.is_file() {
+        serde_json::from_str::<Value>(&fs::read_to_string(&settings_path)?).map_err(|err| {
+            io::Error::other(format!(
+                "failed to parse {}: {err}",
+                settings_path.display()
+            ))
+        })?
+    } else {
+        json!({})
+    };
+
+    let events = ensure_zcode_events_map(&mut settings, &settings_path)?;
+    remove_hook_commands(events, "SessionStart", &hook_path, Some("session"))?;
+    ensure_zcode_session_hook(events, hook_command(&hook_path, Some("session")))?;
+
+    let settings_contents = serde_json::to_string_pretty(&settings)?;
+    let (hook_staged, hook_backup) =
+        prepare_install_file(&hook_path, ZCODE_HOOK_ASSET.as_bytes(), true, false)?;
+    let (settings_staged, settings_backup) =
+        match prepare_install_file(&settings_path, settings_contents.as_bytes(), false, true) {
+            Ok(paths) => paths,
+            Err(err) => {
+                cleanup_install_artifact(&hook_staged);
+                return Err(err);
+            }
+        };
+
+    let hook_had_original = match publish_install_file(&hook_path, &hook_staged, &hook_backup) {
+        Ok(had_original) => had_original,
+        Err(err) => {
+            cleanup_install_artifact(&hook_staged);
+            cleanup_install_artifact(&settings_staged);
+            return Err(err);
+        }
+    };
+
+    let settings_had_original =
+        match publish_install_file(&settings_path, &settings_staged, &settings_backup) {
+            Ok(had_original) => had_original,
+            Err(err) => {
+                let err = combine_install_errors(
+                    err,
+                    rollback_install_file(&hook_path, &hook_backup, hook_had_original),
+                );
+                cleanup_install_artifact(&settings_staged);
+                return Err(err);
+            }
+        };
+
+    if hook_had_original {
+        cleanup_install_artifact(&hook_backup);
+    }
+    if settings_had_original {
+        cleanup_install_artifact(&settings_backup);
+    }
+
+    Ok(ZcodeInstallPaths {
+        hook_path,
+        settings_path,
+    })
+}
+
+pub(crate) fn uninstall_zcode() -> io::Result<ZcodeUninstallResult> {
+    let dir = zcode_dir()?;
+    let hook_path = dir.join("hooks").join(ZCODE_HOOK_INSTALL_NAME);
+    let settings_path = dir.join("config.json");
+    let mut updated_settings = false;
+
+    if settings_path.is_file() {
+        let mut settings = serde_json::from_str::<Value>(&fs::read_to_string(&settings_path)?)
+            .map_err(|err| {
+                io::Error::other(format!(
+                    "failed to parse {}: {err}",
+                    settings_path.display()
+                ))
+            })?;
+
+        if let Some(hooks) = hooks_object_if_present(
+            &mut settings,
+            &settings_path,
+            "zcode config",
+            "zcode config hooks",
+        )? {
+            let events_has_entries = hooks
+                .get("events")
+                .and_then(Value::as_object)
+                .is_some_and(|events| !events.is_empty());
+            if events_has_entries {
+                let events = hooks
+                    .get_mut("events")
+                    .and_then(Value::as_object_mut)
+                    .expect("events object checked above");
+                updated_settings |=
+                    remove_hook_commands(events, "SessionStart", &hook_path, Some("session"))?;
+            }
+        }
+
+        if updated_settings {
+            fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
+        }
+    }
+
+    let removed_hook_file = remove_file_if_exists(&hook_path)?;
+
+    Ok(ZcodeUninstallResult {
+        hook_path,
+        settings_path,
+        removed_hook_file,
+        updated_settings,
     })
 }
 

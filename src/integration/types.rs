@@ -148,6 +148,20 @@ pub(crate) struct LettaUninstallResult {
     pub updated_settings: bool,
 }
 
+#[derive(Debug)]
+pub(crate) struct ZcodeInstallPaths {
+    pub hook_path: PathBuf,
+    pub settings_path: PathBuf,
+}
+
+#[derive(Debug)]
+pub(crate) struct ZcodeUninstallResult {
+    pub hook_path: PathBuf,
+    pub settings_path: PathBuf,
+    pub removed_hook_file: bool,
+    pub updated_settings: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct IntegrationStatus {
     pub target: crate::api::schema::IntegrationTarget,

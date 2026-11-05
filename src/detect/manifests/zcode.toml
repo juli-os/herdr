@@ -1,0 +1,91 @@
+id = "zcode"
+version = "2026.11.05.1"
+min_engine_version = 3
+updated_at = "2026-11-05T00:00:00Z"
+aliases = ["zcode-cli"]
+
+# Patterns are sourced from the ZCode TUI implementation (apps/zcode-cli
+# packages/tui + i18n en-US locale); refine against live captures.
+# Session-identity-only integration: state comes entirely from these screen
+# rules (same model as hermes/qwen/letta).
+[[rules]]
+id = "approval_panel"
+state = "blocked"
+priority = 1200
+region = "bottom_non_empty_lines(24)"
+visible_blocker = true
+contains = ["Approval required: "]
+any = [
+  { contains = ["Up/Down choose, Enter confirms, Esc denies"] },
+  { line_regex = ['^\s*>?\s*(Allow once|Always allow in this project|Deny)\s*$'] },
+]
+
+[[rules]]
+id = "question_panel"
+state = "blocked"
+priority = 1150
+region = "bottom_non_empty_lines(16)"
+visible_blocker = true
+any = [
+  { contains = ["Enter submits, Tab edits, Esc declines"] },
+  { contains = ["Type custom answer. Enter accepts, Esc cancels."] },
+]
+
+[[rules]]
+id = "login_setup"
+state = "blocked"
+priority = 1100
+region = "bottom_non_empty_lines(24)"
+visible_blocker = true
+any = [
+  { contains = ["Use Up/Down to choose, Enter to select."] },
+  { contains = ["Waiting for browser authorization..."] },
+  { contains = ["model setup required", "No available models. Configure a provider or sign in with /login."] },
+]
+
+[[rules]]
+id = "active_status"
+state = "working"
+priority = 900
+region = "bottom_non_empty_lines(12)"
+visible_working = true
+line_regex = ['^\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+esc to interrupt\s*$']
+
+[[rules]]
+id = "busy_input_placeholder"
+state = "working"
+priority = 850
+region = "bottom_non_empty_lines(12)"
+visible_working = true
+contains = ["Type to queue input"]
+
+[[rules]]
+id = "queued_input"
+state = "working"
+priority = 800
+region = "bottom_non_empty_lines(12)"
+visible_working = true
+line_regex = ['^\s*Queue \(\d+\)\s*$']
+
+[[rules]]
+id = "input_pane_idle"
+state = "idle"
+priority = 700
+region = "bottom_non_empty_lines(12)"
+visible_idle = true
+# The input pane is a rounded-border box titled " Input " (or the capitalized
+# permission-mode name: Build/Edit/Plan/Yolo/Guarded). The title row is the
+# box's top border with the title embedded between border runs.
+line_regex = ['^\s*╭?─+\s(?:Input|Build|Edit|Plan|Yolo|Guarded)\s─+']
+not = [
+  { contains = ["esc to interrupt"] },
+  { contains = ["Type to queue input"] },
+  { contains = ["Approval required: "] },
+]
+
+[[rules]]
+id = "no_live_state_evidence"
+state = "unknown"
+priority = 0
+region = "whole_recent"
+regex = ['(?s)^.*$']

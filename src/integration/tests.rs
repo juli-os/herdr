@@ -1217,6 +1217,10 @@ fn windows_hooks_decode_stdin_as_utf8() {
             include_str!("assets/letta/herdr-agent-session.ps1"),
         ),
         (
+            "zcode",
+            include_str!("assets/zcode/herdr-agent-session.ps1"),
+        ),
+        (
             "mastracode",
             include_str!("assets/mastracode/herdr-agent-state.ps1"),
         ),
@@ -4328,6 +4332,165 @@ fn letta_session_hook_is_silent_and_encodes_default_conversation() {
 }
 
 #[test]
+fn install_and_uninstall_zcode_preserve_unrelated_settings_and_hooks() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let zcode_dir = home.join(".zcode").join("cli");
+    fs::create_dir_all(&zcode_dir).unwrap();
+    let settings_path = zcode_dir.join("config.json");
+    fs::write(
+        &settings_path,
+        r#"{"model":"glm-4.6","hooks":{"enabled":true,"events":{"SessionStart":[{"hooks":[{"type":"command","command":"echo user"}]}],"Stop":[{"hooks":[{"type":"command","command":"echo stop"}]}]}}}"#,
+    )
+    .unwrap();
+    let previous_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &home);
+
+    let installed = install_zcode().unwrap();
+    assert_eq!(
+        installed.hook_path,
+        zcode_dir.join("hooks").join(ZCODE_HOOK_INSTALL_NAME)
+    );
+    let first_install = fs::read_to_string(&settings_path).unwrap();
+    let settings: Value = serde_json::from_str(&first_install).unwrap();
+    assert_eq!(settings["model"], "glm-4.6");
+    assert_eq!(settings["hooks"]["enabled"], true);
+    let entries = settings["hooks"]["events"]["SessionStart"]
+        .as_array()
+        .unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0]["hooks"][0]["command"], "echo user");
+    assert!(entries[1].get("matcher").is_none());
+    assert_eq!(entries[1]["hooks"][0]["timeoutMs"], ZCODE_HOOK_TIMEOUT_MS);
+    assert_eq!(entries[1]["hooks"][0]["type"], "command");
+    assert!(entries[1]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .ends_with("session"));
+    let stop_entries = settings["hooks"]["events"]["Stop"].as_array().unwrap();
+    assert_eq!(stop_entries.len(), 1);
+    assert_eq!(stop_entries[0]["hooks"][0]["command"], "echo stop");
+
+    install_zcode().unwrap();
+    assert_eq!(fs::read_to_string(&settings_path).unwrap(), first_install);
+
+    let result = uninstall_zcode().unwrap();
+    assert!(result.removed_hook_file);
+    assert!(result.updated_settings);
+    assert!(!installed.hook_path.exists());
+    let settings: Value =
+        serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
+    assert_eq!(settings["model"], "glm-4.6");
+    let remaining = settings["hooks"]["events"]["SessionStart"]
+        .as_array()
+        .unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0]["hooks"][0]["command"], "echo user");
+    assert_eq!(
+        settings["hooks"]["events"]["Stop"][0]["hooks"][0]["command"],
+        "echo stop"
+    );
+
+    if let Some(home) = previous_home {
+        std::env::set_var("HOME", home);
+    } else {
+        std::env::remove_var("HOME");
+    }
+    let _ = fs::remove_dir_all(base);
+}
+
+#[cfg(unix)]
+#[test]
+fn zcode_session_hook_is_silent_and_reports_session_id() {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::{Command, Stdio};
+
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    fs::create_dir_all(home.join(".zcode").join("cli")).unwrap();
+    let previous_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &home);
+    let installed = install_zcode().unwrap();
+
+    let capture = base.join("args.txt");
+    let fake_herdr = base.join("herdr");
+    fs::write(
+        &fake_herdr,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\n",
+            capture.display()
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&fake_herdr).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&fake_herdr, permissions).unwrap();
+
+    let mut child = Command::new("sh")
+        .arg(&installed.hook_path)
+        .arg("session")
+        .env("HERDR_ENV", "1")
+        .env("HERDR_PANE_ID", "w1:p2")
+        .env("HERDR_SOCKET_PATH", "/tmp/herdr.sock")
+        .env("HERDR_BIN_PATH", &fake_herdr)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            br#"{"hook_event_name":"SessionStart","session_id":"sess-abc-123","source":"startup","cwd":"/tmp","transcript_path":"/tmp/compat.jsonl"}"#,
+        )
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    let args = fs::read_to_string(capture).unwrap();
+    assert!(args.contains("report-agent-session w1:p2"));
+    assert!(args.contains("--source herdr:zcode --agent zcode"));
+    assert!(args.contains("--agent-session-id sess-abc-123"));
+    assert!(args.contains("--session-start-source startup"));
+    // The compat transcript is temp and deleted after the hook returns; the
+    // report must not carry it.
+    assert!(!args.contains("/tmp/compat.jsonl"));
+
+    if let Some(home) = previous_home {
+        std::env::set_var("HOME", home);
+    } else {
+        std::env::remove_var("HOME");
+    }
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn install_zcode_errors_when_config_dir_missing() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    fs::create_dir_all(&home).unwrap();
+    let previous_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &home);
+
+    let err = install_zcode().unwrap_err().to_string();
+    assert!(err.contains("zcode config directory not found"));
+
+    if let Some(home) = previous_home {
+        std::env::set_var("HOME", home);
+    } else {
+        std::env::remove_var("HOME");
+    }
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
 fn install_letta_errors_when_config_dir_missing() {
     let _lock = integration_env_lock();
     let base = unique_base();
@@ -4379,12 +4542,12 @@ fn letta_staged_install_can_restore_the_prior_file() {
     let target = base.join("settings.json");
     fs::write(&target, "old").unwrap();
 
-    let (staged, backup) = prepare_letta_install_file(&target, b"new", false, true).unwrap();
-    let had_original = publish_letta_install_file(&target, &staged, &backup).unwrap();
+    let (staged, backup) = prepare_install_file(&target, b"new", false, true).unwrap();
+    let had_original = publish_install_file(&target, &staged, &backup).unwrap();
     assert!(had_original);
     assert_eq!(fs::read_to_string(&target).unwrap(), "new");
 
-    rollback_letta_install_file(&target, &backup, had_original).unwrap();
+    rollback_install_file(&target, &backup, had_original).unwrap();
     assert_eq!(fs::read_to_string(&target).unwrap(), "old");
     assert!(!backup.exists());
 
