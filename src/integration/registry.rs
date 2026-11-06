@@ -515,6 +515,26 @@ pub(crate) fn experimental_letta_integration_status() -> Option<super::Experimen
     })
 }
 
+/// Zcode follows the Letta precedent: an experimental CLI-only target kept out
+/// of the frozen client endpoint `IntegrationTarget` enum. The tracked file is
+/// the hook script under `~/.zcode/cli/hooks`.
+pub(crate) fn experimental_zcode_integration_status() -> Option<super::ExperimentalIntegrationStatus>
+{
+    let path = zcode_dir()
+        .ok()?
+        .join("hooks")
+        .join(super::ZCODE_HOOK_INSTALL_NAME);
+    let (state, installed_version) =
+        integration_state_for_path(&path, super::ZCODE_INTEGRATION_VERSION);
+    Some(super::ExperimentalIntegrationStatus {
+        label: "zcode",
+        path,
+        state,
+        installed_version,
+        expected_version: super::ZCODE_INTEGRATION_VERSION,
+    })
+}
+
 pub(crate) fn parse_integration_version(content: &str) -> Option<u32> {
     content.lines().find_map(|line| {
         let marker_line = line

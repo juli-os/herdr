@@ -5,10 +5,11 @@ use super::targets::{
     install_antigravity_cli, install_claude, install_codex, install_copilot, install_cursor,
     install_devin, install_droid, install_grok, install_hermes, install_kilo, install_kimi,
     install_letta, install_mastracode, install_omp, install_opencode, install_pi, install_qodercli,
-    install_qwen, uninstall_antigravity_cli, uninstall_claude, uninstall_codex, uninstall_copilot,
-    uninstall_cursor, uninstall_devin, uninstall_droid, uninstall_grok, uninstall_hermes,
-    uninstall_kilo, uninstall_kimi, uninstall_letta, uninstall_mastracode, uninstall_omp,
-    uninstall_opencode, uninstall_pi, uninstall_qodercli, uninstall_qwen,
+    install_qwen, install_zcode, uninstall_antigravity_cli, uninstall_claude, uninstall_codex,
+    uninstall_copilot, uninstall_cursor, uninstall_devin, uninstall_droid, uninstall_grok,
+    uninstall_hermes, uninstall_kilo, uninstall_kimi, uninstall_letta, uninstall_mastracode,
+    uninstall_omp, uninstall_opencode, uninstall_pi, uninstall_qodercli, uninstall_qwen,
+    uninstall_zcode,
 };
 use super::version::{agent_version_requirement, enforce_agent_version};
 use super::{KIMI_MIN_VERSION, PI_EXTENSION_INSTALL_NAME};
@@ -72,6 +73,60 @@ pub(crate) fn uninstall_experimental_letta() -> io::Result<Vec<String>> {
     });
     let outcome = if result.is_ok() { "ok" } else { "error" };
     crate::logging::integration_action("uninstall", "letta", outcome);
+    result
+}
+
+/// Experimental Zcode install that bypasses the frozen client endpoint
+/// `IntegrationTarget` enum, mirroring the Letta precedent. Fold into the agent
+/// registry when it lands.
+pub(crate) fn install_experimental_zcode() -> io::Result<Vec<String>> {
+    let result = install_zcode().map(|installed| {
+        vec![
+            format!(
+                "installed zcode integration hook to {}",
+                installed.hook_path.display()
+            ),
+            format!(
+                "ensured zcode config at {}",
+                installed.settings_path.display()
+            ),
+        ]
+    });
+    let outcome = if result.is_ok() { "ok" } else { "error" };
+    crate::logging::integration_action("install", "zcode", outcome);
+    result
+}
+
+/// Experimental Zcode uninstall counterpart.
+pub(crate) fn uninstall_experimental_zcode() -> io::Result<Vec<String>> {
+    let result = uninstall_zcode().map(|result| {
+        let mut messages = Vec::new();
+        if result.removed_hook_file {
+            messages.push(format!(
+                "removed zcode hook at {}",
+                result.hook_path.display()
+            ));
+        } else {
+            messages.push(format!(
+                "no zcode hook found at {}",
+                result.hook_path.display()
+            ));
+        }
+        if result.updated_settings {
+            messages.push(format!(
+                "removed herdr zcode hook entry from {}",
+                result.settings_path.display()
+            ));
+        } else {
+            messages.push(format!(
+                "no herdr zcode hook entry found in {}",
+                result.settings_path.display()
+            ));
+        }
+        messages
+    });
+    let outcome = if result.is_ok() { "ok" } else { "error" };
+    crate::logging::integration_action("uninstall", "zcode", outcome);
     result
 }
 

@@ -193,6 +193,12 @@ pub(crate) fn letta_dir() -> io::Result<PathBuf> {
     Ok(home_dir()?.join(".letta"))
 }
 
+/// ZCode's user config lives at `~/.zcode/cli/config.json` (the hooks runtime
+/// contract fixes this location; there is no config-dir env override).
+pub(crate) fn zcode_dir() -> io::Result<PathBuf> {
+    Ok(home_dir()?.join(".zcode").join("cli"))
+}
+
 pub(crate) fn cursor_dir() -> io::Result<PathBuf> {
     config_dir_from_env_or_home(CURSOR_CONFIG_DIR_ENV_VAR, &[".cursor"])
 }
